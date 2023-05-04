@@ -7,6 +7,7 @@ edition = "2021"
 async-trait = "0.1.57"
 curv-kzen = "0.9.0"
 dtrust = { path = "../../platform/core" }
+libdots = "0.2.0"
 multi-party-ecdsa = { git = "https://github.com/ZenGo-X/multi-party-ecdsa.git", version = "0.8.1" }
 round-based = "0.1.4"
 serde = { version = "1.0.160", features = ["derive"] }

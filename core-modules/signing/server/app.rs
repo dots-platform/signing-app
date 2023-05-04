@@ -1,5 +1,4 @@
 use curv::{arithmetic::Converter, elliptic::curves::Secp256k1, BigInt};
-use dtrust::utils::init_app;
 use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::state_machine::{
     keygen::{Keygen, LocalKey, ProtocolMessage},
     sign::{
@@ -7,12 +6,12 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::state_machine::{
     },
 };
 
+use libdots;
 use round_based::{Msg, StateMachine};
 use serde_json::Value;
-use std::{
-    io::{self, Error, ErrorKind, Read, Write},
-    net::TcpStream,
-};
+use std::error::Error;
+use std::io::{self, ErrorKind};
+use std::io::prelude::*;
 
 const PROTOCOL_MSG_SIZE: usize = 18000;
 const PARAM_SIZE: usize = 100;
@@ -21,20 +20,20 @@ const PARAM_SIZE: usize = 100;
 ///
 /// # Arguments
 ///
-/// * `socks` - Peer-to-peer socket TCP connections between parties
+/// * `num_parties` - The number of parties
 /// * `party` - KeyGen protocol state machine of current party
 /// * `party_index` - Index of current party
 fn receive_keygen(
-    socks: &mut Vec<TcpStream>,
+    num_parties: u16,
     party: &mut Keygen,
     party_index: u16,
-) -> io::Result<()> {
+) -> Result<(), Box<dyn Error>> {
     // Receive from to all other recipients
-    for sender in 1..(socks.len() + 1) {
-        let recipient = party_index as usize;
+    for sender in 1..(num_parties + 1) {
+        let recipient = party_index;
         if recipient != sender {
             let mut result_buf = [0; PROTOCOL_MSG_SIZE];
-            socks[sender - 1].read(&mut result_buf)?;
+            libdots::msg::recv(&mut result_buf, sender as usize - 1, 0)?;
 
             // Deserialize message
             let received_msg = serde_json::from_str::<Msg<ProtocolMessage>>(
@@ -45,7 +44,7 @@ fn receive_keygen(
             // Process received broadcast message
             party
                 .handle_incoming(received_msg)
-                .map_err(|e| Error::new(ErrorKind::Other, e))?;
+                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
         }
     }
     Ok(())
@@ -55,22 +54,20 @@ fn receive_keygen(
 ///
 /// # Arguments
 ///
-/// * `socks` - Peer-to-peer socket TCP connections between parties
 /// * `party` - OfflineStage protocol state machine of current party
 /// * `party_index` - Index of current party
 /// * `active_parties` - Parties participating in producing the signature
 fn receive_sign(
-    socks: &mut Vec<TcpStream>,
     party: &mut OfflineStage,
     party_index: u16,
     active_parties: &Vec<u16>,
-) -> io::Result<()> {
+) -> Result<(), Box<dyn Error>> {
     // Receive from to all other recipients
     for sender in active_parties {
         let recipient = party_index as usize;
         if recipient != *sender as usize {
             let mut result_buf = [0; PROTOCOL_MSG_SIZE];
-            socks[*sender as usize - 1].read(&mut result_buf)?;
+            libdots::msg::recv(&mut result_buf, *sender as usize - 1, 0)?;
 
             // Deserialize message
             let received_msg = serde_json::from_str::<Msg<OfflineProtocolMessage>>(
@@ -80,7 +77,7 @@ fn receive_sign(
             // Process received broadcast message
             party
                 .handle_incoming(received_msg)
-                .map_err(|e| Error::new(ErrorKind::Other, e))?;
+                .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
         }
     }
     Ok(())
@@ -91,29 +88,29 @@ fn receive_sign(
 /// # Arguments
 ///
 /// * `msg_index` - Index of message which this party is broadcasting to all other parties
-/// * `socks` - Peer-to-peer socket TCP connections between parties
+/// * `num_parties` - The number of parties
 /// * `party` - KeyGen protocol state machine of current party
 /// * `party_index` - Index of current party
 fn broadcast_keygen(
     msg_index: usize,
-    socks: &mut Vec<TcpStream>,
+    num_parties: u16,
     party: &mut Keygen,
     party_index: u16,
-) -> io::Result<()> {
+) -> Result<(), Box<dyn Error>> {
     let msg = &party.message_queue()[msg_index];
 
     // Serialize message
     let serialized = serde_json::to_string(&msg).unwrap();
 
     // Send to all other recipients
-    for recipient in 1..(socks.len() + 1) {
-        let sender = party_index as usize;
+    for recipient in 1..(num_parties + 1) {
+        let sender = party_index;
         if recipient != sender {
             // Send message to recipient
-            socks[recipient - 1].write(serialized.as_bytes())?;
+            libdots::msg::send(serialized.as_bytes(), recipient as usize - 1, 0)?;
         }
     }
-    receive_keygen(socks, party, party_index)?;
+    receive_keygen(num_parties, party, party_index)?;
     Ok(())
 }
 
@@ -122,17 +119,16 @@ fn broadcast_keygen(
 /// # Arguments
 ///
 /// * `msg` - Index of message which this party is broadcasting to all other parties
-/// * `socks` - Peer-to-peer socket TCP connections between parties
+/// * `num_parties` - The number of parties
 /// * `party` - OfflineStage protocol state machine of current party
 /// * `party_index` - Index of current party
 /// * `active_parties` - Parties participating in producing the signature
 fn broadcast_sign(
     msg_index: usize,
-    socks: &mut Vec<TcpStream>,
     party: &mut OfflineStage,
     party_index: u16,
     active_parties: &Vec<u16>,
-) -> io::Result<()> {
+) -> Result<(), Box<dyn Error>> {
     let msg = &party.message_queue()[msg_index];
 
     // Serialize message
@@ -143,10 +139,10 @@ fn broadcast_sign(
         let sender = party_index as usize;
         if *recipient != sender as u16 {
             // Send message to recipient
-            socks[*recipient as usize - 1].write(serialized.as_bytes())?;
+            libdots::msg::send(serialized.as_bytes(), *recipient as usize - 1, 0)?;
         }
     }
-    receive_sign(socks, party, party_index, &active_parties)?;
+    receive_sign(party, party_index, &active_parties)?;
     Ok(())
 }
 
@@ -155,25 +151,25 @@ fn broadcast_sign(
 /// # Arguments
 ///
 /// * `msg_queue` - Messages this party is sending p2p to specific recipients
-/// * `socks` - Peer-to-peer socket TCP connections between parties
+/// * `num_parties` - The number of parties
 /// * `party` - KeyGen protocol state machine of current party
 /// * `party_index` - Index of current party
 fn p2p_keygen(
     msg_queue: &mut Vec<Msg<ProtocolMessage>>,
-    socks: &mut Vec<TcpStream>,
+    num_parties: u16,
     party: &mut Keygen,
     party_index: u16,
-) -> io::Result<()> {
+) -> Result<(), Box<dyn Error>> {
     for msg in msg_queue.iter() {
         // Serialize message
         let serialized = serde_json::to_string(&msg).unwrap();
 
         // Send to intended recipient
-        let recipient = msg.receiver.unwrap() as usize;
-        socks[recipient - 1].write(serialized.as_bytes())?;
+        let recipient = msg.receiver.unwrap();
+        libdots::msg::send(serialized.as_bytes(), recipient as usize - 1, 0)?;
     }
 
-    receive_keygen(socks, party, party_index)?;
+    receive_keygen(num_parties, party, party_index)?;
     Ok(())
 }
 
@@ -182,27 +178,25 @@ fn p2p_keygen(
 /// # Arguments
 ///
 /// * `msg_queue` - Messages this party is sending p2p to specific recipients
-/// * `socks` - Peer-to-peer socket TCP connections between parties
 /// * `party` - OfflineStage protocol state machine of current party
 /// * `party_index` - Index of current party
 /// * `active_parties` - Parties participating in producing the signature
 fn p2p_sign(
     msg_queue: &mut Vec<Msg<OfflineProtocolMessage>>,
-    socks: &mut Vec<TcpStream>,
     party: &mut OfflineStage,
     party_index: u16,
     active_parties: &Vec<u16>,
-) -> io::Result<()> {
+) -> Result<(), Box<dyn Error>> {
     for msg in msg_queue.iter() {
         // Serialize message
         let serialized = serde_json::to_string(&msg).unwrap();
 
         // Send to intended recipient
-        let recipient = msg.receiver.unwrap() as usize;
-        socks[recipient - 1].write(serialized.as_bytes())?;
+        let recipient = msg.receiver.unwrap();
+        libdots::msg::send(serialized.as_bytes(), recipient as usize - 1, 0)?;
     }
 
-    receive_sign(socks, party, party_index, active_parties)?;
+    receive_sign(party, party_index, active_parties)?;
     Ok(())
 }
 
@@ -213,15 +207,13 @@ fn p2p_sign(
 /// * `msg_to_sign` - Message that parties must sign
 /// * `party_index` - Index of current party
 /// * `offline_output` - CompletedOfflineStage protocol state machine of current party
-/// * `socks` - Peer-to-peer socket TCP connections between parties
 /// * `active_parties` - Parties participating in producing the signature
 fn sign_message(
     msg_to_sign: BigInt,
     party_index: u16,
     offline_output: CompletedOfflineStage,
-    socks: &mut Vec<TcpStream>,
     active_parties: &Vec<u16>,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, Box<dyn Error>> {
     // Obtain party's partial share
     let (manual_sign, partial_share) = SignManual::new(msg_to_sign, offline_output).unwrap();
 
@@ -234,7 +226,7 @@ fn sign_message(
         let sender = party_index;
         if *recipient != sender {
             // Send message to recipient
-            socks[*recipient as usize - 1].write(serialized.as_bytes())?;
+            libdots::msg::send(serialized.as_bytes(), *recipient as usize - 1, 0)?;
         }
     }
 
@@ -243,8 +235,8 @@ fn sign_message(
     for sender in active_parties {
         let recipient = party_index;
         if recipient != *sender {
-            let mut result_buf = [0; PROTOCOL_MSG_SIZE];
-            socks[*sender as usize - 1].read(&mut result_buf)?;
+            let mut result_buf = [0u8; PROTOCOL_MSG_SIZE];
+            libdots::msg::recv(&mut result_buf, *sender as usize - 1, 0)?;
 
             // Deserialize message
             let received_share = serde_json::from_str::<PartialSignature>(
@@ -259,7 +251,7 @@ fn sign_message(
 
     let signature = manual_sign.complete(&other_partial_shares).unwrap();
     println!("Signature: {:?}", serde_json::to_string(&signature).unwrap());
-    return serde_json::to_vec_pretty(&signature).map_err(|e| Error::new(ErrorKind::Other, e));
+    Ok(serde_json::to_vec_pretty(&signature).map_err(|e| io::Error::new(ErrorKind::Other, e))?)
 }
 
 /// Generates local key share of the multi-party ECDSA threshold signing scheme for this party
@@ -268,28 +260,26 @@ fn sign_message(
 ///
 /// * `num_parties` - Total number of parties
 /// * `num_threshold` - The threshold t such that the number of honest and online parties must be at least t + 1 to produce a valid signature
-/// * `socks` - Peer-to-peer socket TCP connections between parties
 /// * `party_index` - Index of current party
 fn keygen(
     num_parties: u16,
     num_threshold: u16,
-    socks: &mut Vec<TcpStream>,
     party_index: u16,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, Box<dyn Error>> {
     // Set up current rank's party KeyGen state machine
     let mut party = Keygen::new(party_index, num_threshold, num_parties).unwrap();
 
     // Round 1
     party
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
-    broadcast_keygen(0, socks, &mut party, party_index)?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
+    broadcast_keygen(0, num_parties, &mut party, party_index)?;
 
     // Round 2
-    broadcast_keygen(1, socks, &mut party, party_index)?;
+    broadcast_keygen(1, num_parties, &mut party, party_index)?;
     party
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Round 3
     let mut msg_queue = vec![];
@@ -298,19 +288,19 @@ fn keygen(
         msg_queue.push(party.message_queue()[msg_index].clone());
     }
 
-    p2p_keygen(&mut msg_queue, socks, &mut party, party_index)?;
+    p2p_keygen(&mut msg_queue, num_parties, &mut party, party_index)?;
     party
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
-    broadcast_keygen((num_parties + 1) as usize, socks, &mut party, party_index)?;
+    broadcast_keygen((num_parties + 1) as usize, num_parties, &mut party, party_index)?;
     party
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     let local_key = party.pick_output().unwrap().unwrap();
 
-    serde_json::to_vec_pretty(&local_key).map_err(|e| Error::new(ErrorKind::Other, e))
+    Ok(serde_json::to_vec_pretty(&local_key).map_err(|e| io::Error::new(ErrorKind::Other, e))?)
 }
 
 /// Generates signature of the multi-party ECDSA threshold signing scheme for this party
@@ -320,17 +310,15 @@ fn keygen(
 /// * `num_threshold` - The threshold t such that the number of honest and online parties must be at least t + 1 to produce a valid signature
 /// * `active_parties` - Parties participating in producing the signature
 /// * `key` - Local key share of current party generated in the keygen phase of the protocol
-/// * `socks` - Peer-to-peer socket TCP connections between parties
 /// * `party_index` - Index of current party
 /// * `message` - Message that must be signed
 fn sign(
     num_threshold: u16,
     active_parties: &Vec<u16>,
     key: LocalKey<Secp256k1>,
-    socks: &mut Vec<TcpStream>,
     party_index: u16,
     message: String,
-) -> Result<Vec<u8>, Error> {
+) -> Result<Vec<u8>, Box<dyn Error>> {
     if !active_parties.contains(&party_index) {
         println!("Party {:?} is not needed in this signature generation.", party_index);
         return Ok(Vec::new());
@@ -339,13 +327,13 @@ fn sign(
     let mut offline_stage = OfflineStage::new(party_index, active_parties.clone(), key).unwrap();
     offline_stage
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Round 1
-    broadcast_sign(0, socks, &mut offline_stage, party_index, &active_parties)?;
+    broadcast_sign(0, &mut offline_stage, party_index, &active_parties)?;
     offline_stage
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Round 2
     let mut msg_queue = vec![];
@@ -355,62 +343,57 @@ fn sign(
     }
     p2p_sign(
         &mut msg_queue,
-        socks,
         &mut offline_stage,
         party_index,
         &active_parties,
     )?;
     offline_stage
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Round 3
     broadcast_sign(
         (num_threshold + 1) as usize,
-        socks,
         &mut offline_stage,
         party_index,
         &active_parties,
     )?;
     offline_stage
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Round 4
     broadcast_sign(
         (num_threshold + 2) as usize,
-        socks,
         &mut offline_stage,
         party_index,
         &active_parties,
     )?;
     offline_stage
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Round 5
     broadcast_sign(
         (num_threshold + 3) as usize,
-        socks,
         &mut offline_stage,
         party_index,
         &active_parties,
     )?;
     offline_stage
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Round 6
     broadcast_sign(
         (num_threshold + 4) as usize,
-        socks,
         &mut offline_stage,
         party_index,
         &active_parties,
     )?;
     offline_stage
         .proceed()
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Sign message
     let message_int = BigInt::from_bytes(&message.as_bytes());
@@ -419,13 +402,18 @@ fn sign(
         message_int,
         party_index,
         offline_output,
-        socks,
         &active_parties,
     )
 }
 
-fn main() -> io::Result<()> {
-    let (rank, func_name, in_files, out_files, mut socks) = init_app()?;
+fn main() -> Result<(), Box<dyn Error>> {
+    libdots::env::init()?;
+
+    let rank = libdots::env::get_world_rank();
+    let func_name = libdots::env::get_func_name();
+    let in_files = libdots::env::get_in_files();
+    let out_files = libdots::env::get_out_files();
+
     let party_index = (rank + 1) as u16;
     let mut params_buf: Vec<u8> = [0; PARAM_SIZE].to_vec();
     let mut param_file = &in_files[0];
@@ -440,7 +428,6 @@ fn main() -> io::Result<()> {
         let key = keygen(
             params["num_parties"].as_u64().unwrap() as u16,
             params["num_threshold"].as_u64().unwrap() as u16,
-            &mut socks,
             party_index,
         )?;
         key_file.write(&key)?;
@@ -461,7 +448,6 @@ fn main() -> io::Result<()> {
             params["num_threshold"].as_u64().unwrap() as u16,
             &active_parties,
             key,
-            &mut socks,
             party_index,
             params["message"].to_string(),
         )?;
