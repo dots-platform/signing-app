@@ -1,87 +1,154 @@
-# Berkeley DoTS: The Berkeley Decentralized Trust Stack
+# Setup
 
-***Caveat: This codebase is currently close-sourced. We plan to have it open-sourced at the end of the class. Until then, please do not distribute this repo to anyone outside this class.***
+### Installations
 
-Distributing trust has become a fundamental principle in building many of today's applications. However, developing and deploying distributed applications remained challenging. Berkeley Dots is a platform for users to easily develop, test, and deploy applications with distributed trust. Here are some example real-world applications with distributed trust that can be built from Berkeley Dots:
+Install Rust and GMP arithmetic library:
 
-### Cryptocurrency wallet custody
-People claim ownership to crypto assets and authorize transactions using private keys. If these keys are lost, then the user permanently lose access to their assets. To protect these private keys, cryptocurrency custody service (e.g. Fireblocks) distribute the keys to multiple servers. Each server holds a secret share of the key, and the servers jointly run secure multi-party computation to authorize transactions with the key.
-
-### Federated blockchain bridges.
-Blockchain bridges enable users to transfer crypto assets or data between two different chains. A federated bridge distributes trust among a committee of stakeholders, who jointly facilitates the transfer of funds. A user that wants to transfer fund to another blockchain would first lock his assets from the source chain into the bridge. The committee then runs an MPC algorithm to jointly produce a minting signature. The user can use this signature to claim a respective token on the destination chain.
-
-### Distributed PKI
-A Distributed Public key infrastructure (PKI) logs clients' public keys on multiple servers. These servers jointly maintain a consistent global view of users' public key. A user can check if his public key is not tampered with by comparing if the public keys stored on these servers are equal to each other.
-
-
-### Collaborative learning/analytics.
-Multiple organizations (e.g. banks, hospitals) wants to jointly train a ML model or performing analytics using their sensitive data. They can use MPC to run collaborative learning/analytics without revealing their sensitive data to each other.
-
-
-## Getting Started
-Our platform can run on MacOS and Linux. Windows is currently not supported.
-
-### 1. Installing Protocol Buffer Compiler
-First, make sure `protoc` is installed on your machine, and its version is 3+. If not, follow [https://grpc.io/docs/protoc-installation/](https://grpc.io/docs/protoc-installation/) to install it.
-
-On linux:
-```bash
-$ apt install -y protobuf-compiler
-$ protoc --version  # Ensure compiler version is 3+
-```
-On MacOS, using Homebrew:
-```bash
-$ brew install protobuf
-$ protoc --version  # Ensure compiler version is 3+
+```jsx
+brew install rust
 ```
 
-### 2. Installing Rust
-Follow the instruction on [https://www.rust-lang.org/tools/install](https://www.rust-lang.org/tools/install) to install Rust on your machine.
-
-### 3. Initializing decentralized nodes
-First, we need to initialize the DTrust platform on multiple servers. We can use the `init_server` command to initialize a private node on a server. The `init_server` command takes a `node_id` and config file (`server_conf.yml`) as input, and initialize the node according to the config. The bash script below will initialize two servers with `node1` and `node2` as their `node_id` respectively.  You need to open two terminals to execute the following commands.
-
-On terminal 1:
-```bash
-./platform/init_server --node_id node1 --config ./core-modules/pki/server_conf_tcp.yml
+```jsx
+brew install gmp
 ```
 
-On terminal 2:
-```bash
-./platform/init_server --node_id node2 --config ./core-modules/pki/server_conf_tcp.yml
+# Initialize Decentralized Nodes
+In the `dtrust` folder, start 3 nodes in three separate terminals:
+```jsx
+./platform/init_server --node_id node1 --config ./core-modules/signing/server_conf.yml
 ```
-You can alternatively initialize the nodes to establish tls connections by following the instructions at [docs/tls.md](docs/tls.md)
 
-### 4. Running an example application
-The `core-modules/pki` folder contains an example application called distributed PKI (public key infrastructure) written in Rust. This app enables a client to store his public key on multiple nodes. Other clients who want to talk to this client can then retrieve the public key from these servers. To run the client, open a another terminal and type in the following commands.
+```jsx
+./platform/init_server --node_id node2 --config ./core-modules/signing/server_conf.yml
+```
 
-```bash
-cd core-modules/pki
+```jsx
+./platform/init_server --node_id node3 --config ./core-modules/signing/server_conf.yml
+```
+
+
+# Start Server
+`cd` into `core-modules/signing`. Start the server:
+```jsx
 cargo build
-cargo run --bin client "upload_pk" "user1" "random_public_key"
-cargo run --bin client "recover_pk" "user1"
+cargo run --bin rust_app
 ```
 
-You should see the message: "recovered public-key: "random_public_key"" at the bottom of your screen.
+MacOS has a [known issue](https://github.com/ZenGo-X/multi-party-ecdsa/issues/66) where `rustc` has trouble locating the `gmp` library. You may see something similar to the following error:
 
+```jsx
+ld: library not found for -lgmp
+clang: error: linker command failed with exit code 1
+```
 
-## Workflow of a decentralized application
-The BDots platform consists of a client and multiple decentralized nodes (servers). The client interacts with the nodes through gRPC requests. BDots provide network connections between these servers, handles file storage, and offers common crypto primitives (under development) for applications built on top of the platform. Below is a diagram that outline the overall architecture of BDots. 
-<img src="imgs/arch.png"  width="500" title="Employee Data title">
+If this happens, link the library manually by running:
 
-A typical decentralized application consists of the following steps:
-1. A client performs some local pre-computation, and uploads the results of the pre-computations to the servers. The pre-computation results are stored as files on the servers.
-2. The client initiates a request to execute a decentralized app remotely on the servers. The servers take the input files as specified by the client, jointly executes the decentralized app, and stores the results to output files specified by the client.
-3. The client downloads the results from the servers, and performs some post-computation on the results locally.
+```jsx
+export LIBRARY_PATH=$LIBRARY_PATH:/opt/homebrew/lib
+export INCLUDE_PATH=$INCLUDE_PATH:/opt/homebrew/include
+```
+Now, restart the server.
 
-The above workflow only provides a general guideline for developing decentralized applications. A decentralized application does not need to follow these steps exactly. Each step is separate and composable from each other, and can be optional depending on the specific application you are building. For example, an app that does secret-key recovery does not have any server side computations, so it can skip step 2.
+# KeyGen
+We will generate keys for a scheme that has 3 separate parties and a threshold of 1 party. In a new terminal, run:
 
-# Docs
-To learn more about the BDoTS platform as well as this example application, checkout our [tutorial](docs/client_apps.md) . They will equip you with the necessary knowledge to develop your own decentralized applications on BDoTS.
+```jsx
+cargo run --bin client keygen 3 1 key.json
+```
+The local key shares will be generated as files:
+- In `dtrust/signing/files/node1/key.json`, you will find the key for party 1.
+- In `dtrust/signing/files/node2/key.json`, you will find the key for party 2.
+- In `dtrust/signing/files/node3/key.json`, you will find the key for party 3.
 
-We add a [second tutorial](docs/server_apps.md) specifically on how to develop server-side applications. Check it out if your project has server-side functionalities.
+# Signing
 
-For toggling between TLS and TCP between clients and servers, see [here](docs/tls.md).
+We will sign the message `“hello”` by passing in the indices of the parties who attended the signing (`1,2`). In a new terminal, run:
 
-# Join our Discord channels
-If you have any questions or want to hear about our latest updates, come join our [discord](https://discord.gg/uVVyTFDpXV) channel.
+```jsx
+cargo run --bin client sign 3 1 key.json 1,2 hello
+```
+The resulting signature will be generated as a file:
+- In `dtrust/signing/files/node1/signature.json`, you will find the joint signature.
+- In `dtrust/signing/files/node2/signature.json`, you will find the joint signature.
+- In `dtrust/signing/files/node3/signature.json`, you will find nothing (not an active party).
+
+The joint signature will look something like this:
+```jsx
+{
+   "r":{
+      "curve":"secp256k1",
+      "scalar":[
+         190,
+         83,
+         147,
+         97,
+         147,
+         24,
+         171,
+         144,
+         225,
+         140,
+         23,
+         29,
+         224,
+         199,
+         108,
+         179,
+         0,
+         20,
+         105,
+         197,
+         99,
+         173,
+         52,
+         136,
+         166,
+         196,
+         94,
+         151,
+         149,
+         223,
+         65,
+         156
+      ]
+   },
+   "s":{
+      "curve":"secp256k1",
+      "scalar":[
+         37,
+         27,
+         175,
+         251,
+         42,
+         109,
+         130,
+         42,
+         185,
+         37,
+         121,
+         21,
+         159,
+         214,
+         217,
+         8,
+         203,
+         171,
+         149,
+         109,
+         225,
+         71,
+         100,
+         192,
+         182,
+         251,
+         82,
+         12,
+         103,
+         249,
+         111,
+         4
+      ]
+   },
+   "recid":0
+}
+```

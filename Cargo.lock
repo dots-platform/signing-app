@@ -455,18 +455,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dtrust"
-version = "0.1.0"
-dependencies = [
- "dotspb",
- "futures",
- "prost",
- "tokio",
- "tonic",
- "uuid",
-]
-
-[[package]]
 name = "ecdsa"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1730,13 +1718,17 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "curv-kzen",
- "dtrust",
+ "dotspb",
+ "futures",
  "libdots",
  "multi-party-ecdsa",
+ "prost",
  "round-based",
  "serde",
  "serde_json",
  "tokio",
+ "tonic",
+ "uuid",
 ]
 
 [[package]]

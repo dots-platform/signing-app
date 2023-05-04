@@ -1,9 +1,10 @@
 use std::env;
 
-use dtrust::client::Client;
-
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+
+mod client;
+use client::Client;
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
