@@ -42,6 +42,7 @@ impl SecretKeyStorage for Client {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let use_tls: bool = false;
+    let num_parties = 3;
     let node_addrs =
         if use_tls == true {
             ["https://node1.test:50051", "https://node2.test:50052", "https://node3.test:50053"]
@@ -63,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     client.setup(node_addrs.to_vec(), rootca_certpath);
     client.distribute_sk(String::from("sk"), 666).await;
-    client.exec(app_name, func_name, in_files.to_vec(), [String::from("out")].to_vec()).await?;
+    client.exec(app_name, func_name, in_files.to_vec(), [String::from("out")].to_vec(), vec![vec![]; num_parties]).await?;
     client.recover_sk(String::from("sk")).await;
     
     Ok(())

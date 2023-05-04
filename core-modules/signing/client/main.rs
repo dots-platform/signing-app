@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let out_files = [key_file];
 
             client
-                .exec(app_name, "keygen", in_files.to_vec(), out_files.to_vec())
+                .exec(app_name, "keygen", in_files.to_vec(), out_files.to_vec(), vec![vec![]; num_parties as usize])
                 .await?;
         }
         "sign" => {
@@ -155,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let out_files = [String::from("signature.json")];
 
             client
-                .exec(app_name, "signing", in_files.to_vec(), out_files.to_vec())
+                .exec(app_name, "signing", in_files.to_vec(), out_files.to_vec(), vec![vec![]; num_parties as usize])
                 .await?;
         }
 
