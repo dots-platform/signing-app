@@ -1,6 +1,5 @@
 use std::env;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 mod client;
@@ -20,47 +19,31 @@ pub enum Params {
     },
 }
 
-#[async_trait]
-pub trait ThresholdSigning {
-    async fn upload_keygen_params(&self, id: String, num_threshold: u16, num_parties: u16);
-
-    async fn upload_sign_params(
-        &self,
-        id: String,
-        num_threshold: u16,
-        active_parties: Vec<u16>,
-        message: String,
-    );
+async fn upload_keygen_params(client: &Client, id: String, num_threshold: u16, num_parties: u16) {
+    let params = Params::K {
+        num_threshold,
+        num_parties,
+    };
+    let json = serde_json::to_vec(&params).unwrap();
+    let upload_val = vec![json; client.node_addrs.len()];
+    client.upload_blob(id.clone() + ".json", upload_val).await;
 }
 
-#[async_trait]
-impl ThresholdSigning for Client {
-    async fn upload_keygen_params(&self, id: String, num_threshold: u16, num_parties: u16) {
-        let params = Params::K {
-            num_threshold,
-            num_parties,
-        };
-        let json = serde_json::to_vec(&params).unwrap();
-        let upload_val = vec![json; self.node_addrs.len()];
-        self.upload_blob(id.clone() + ".json", upload_val).await;
-    }
-
-    async fn upload_sign_params(
-        &self,
-        id: String,
-        num_threshold: u16,
-        active_parties: Vec<u16>,
-        message: String,
-    ) {
-        let params = Params::S {
-            num_threshold,
-            active_parties,
-            message,
-        };
-        let json = serde_json::to_vec(&params).unwrap();
-        let upload_val = vec![json; self.node_addrs.len()];
-        self.upload_blob(id.clone() + ".json", upload_val).await;
-    }
+async fn upload_sign_params(
+    client: &Client,
+    id: String,
+    num_threshold: u16,
+    active_parties: Vec<u16>,
+    message: String,
+) {
+    let params = Params::S {
+        num_threshold,
+        active_parties,
+        message,
+    };
+    let json = serde_json::to_vec(&params).unwrap();
+    let upload_val = vec![json; client.node_addrs.len()];
+    client.upload_blob(id.clone() + ".json", upload_val).await;
 }
 
 #[tokio::main]
@@ -101,8 +84,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match &cmd[..] {
         "keygen" => {
-            client
-                .upload_keygen_params(String::from(cli_id), num_threshold, num_parties)
+            upload_keygen_params(&client, String::from(cli_id), num_threshold, num_parties)
                 .await;
 
             let in_files = [String::from("user1.json")];
@@ -135,8 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 active_parties.push(party.trim_matches(char::from(0)).parse::<u16>().unwrap());
             }
 
-            client
-                .upload_sign_params(String::from(cli_id), num_threshold, active_parties, message)
+            upload_sign_params(&client, String::from(cli_id), num_threshold, active_parties, message)
                 .await;
 
             let in_files = [String::from("user1.json"), key_file];
