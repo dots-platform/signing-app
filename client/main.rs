@@ -2,7 +2,7 @@ use std::env;
 use std::error::Error;
 
 use dotspb::dec_exec::dec_exec_client::DecExecClient;
-use dotspb::dec_exec::{App, Blob};
+use dotspb::dec_exec::App;
 use futures::future;
 use serde::{Deserialize, Serialize};
 use tonic::transport::Channel;
@@ -22,72 +22,16 @@ fn uuid_to_uuidpb(id: Uuid) -> dotspb::dec_exec::Uuid {
 #[serde(tag = "type")]
 pub enum Params {
     K {
+        key_file: String,
         num_parties: u16,
         num_threshold: u16,
     },
     S {
+        key_file: String,
         num_threshold: u16,
         active_parties: Vec<u16>,
         message: String,
     },
-}
-
-async fn upload_keygen_params(
-    clients: &mut [DecExecClient<Channel>],
-    num_parties: u16,
-    num_threshold: u16,
-) -> Result<(), Box<dyn Error>> {
-    let params = Params::K {
-        num_parties,
-        num_threshold,
-    };
-    let json = serde_json::to_vec(&params).unwrap();
-    future::join_all(
-            clients
-                .iter_mut()
-                .map(|client|
-                     client.upload_blob(Request::new(Blob {
-                         client_id: "".to_owned(),
-                         key: format!("keygen-params.json"),
-                         val: json.clone(),
-                     }))
-                 )
-        )
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(())
-}
-
-async fn upload_sign_params(
-    clients: &mut [DecExecClient<Channel>],
-    num_threshold: u16,
-    active_parties: &[u16],
-    message: &str,
-) -> Result<(), Box<dyn Error>> {
-    let params = Params::S {
-        num_threshold,
-        active_parties: active_parties.to_owned(),
-        message: message.to_owned(),
-    };
-    let json = serde_json::to_vec(&params).unwrap();
-    future::join_all(
-            clients
-                .iter_mut()
-                .map(|client|
-                     client.upload_blob(Request::new(Blob {
-                         client_id: "".to_owned(),
-                         key: format!("sign-params.json"),
-                         val: json.clone(),
-                     }))
-                 )
-        )
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(())
 }
 
 async fn keygen(
@@ -96,7 +40,12 @@ async fn keygen(
     num_parties: u16,
     num_threshold: u16,
 ) -> Result<(), Box<dyn Error>> {
-    upload_keygen_params(clients, num_parties, num_threshold).await?;
+    let params = Params::K {
+        key_file: key_file.to_owned(),
+        num_parties,
+        num_threshold,
+    };
+    let params_json = serde_json::to_vec(&params)?;
 
     let request_id = Uuid::new_v4();
     future::join_all(
@@ -109,9 +58,9 @@ async fn keygen(
                         request_id: Some(uuid_to_uuidpb(request_id)),
                         client_id: "".to_owned(),
                         func_name: "keygen".to_owned(),
-                        in_files: vec!["keygen-params.json".to_owned()],
-                        out_files: vec![key_file.to_owned()],
-                        args: vec![],
+                        in_files: vec![],
+                        out_files: vec![],
+                        args: vec![params_json.clone()],
                     }))
                 )
         )
@@ -129,8 +78,13 @@ async fn sign(
     active_parties: &[u16],
     message: &str,
 ) -> Result<(), Box<dyn Error>> {
-    upload_sign_params(clients, num_threshold, active_parties, message)
-        .await?;
+    let params = Params::S {
+        key_file: key_file.to_owned(),
+        num_threshold,
+        active_parties: active_parties.to_owned(),
+        message: message.to_owned(),
+    };
+    let params_json = serde_json::to_vec(&params)?;
 
     let request_id = Uuid::new_v4();
     future::join_all(
@@ -143,9 +97,9 @@ async fn sign(
                         request_id: Some(uuid_to_uuidpb(request_id)),
                         client_id: "".to_owned(),
                         func_name: "signing".to_owned(),
-                        in_files: vec!["sign-params.json".to_owned(), key_file.to_owned()],
-                        out_files: vec!["signature.json".to_owned()],
-                        args: vec![],
+                        in_files: vec![],
+                        out_files: vec![],
+                        args: vec![params_json.clone()],
                     }))
                 )
         )

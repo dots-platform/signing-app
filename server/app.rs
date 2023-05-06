@@ -10,11 +10,10 @@ use libdots;
 use round_based::{Msg, StateMachine};
 use serde_json::Value;
 use std::error::Error;
+use std::fs;
 use std::io::{self, ErrorKind};
-use std::io::prelude::*;
 
 const PROTOCOL_MSG_SIZE: usize = 18000;
-const PARAM_SIZE: usize = 100;
 
 /// This party receives incoming messages in present round of the keygen protocol
 ///
@@ -411,35 +410,27 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let rank = libdots::env::get_world_rank();
     let func_name = libdots::env::get_func_name();
-    let in_files = libdots::env::get_in_files();
-    let out_files = libdots::env::get_out_files();
+    let args = libdots::env::get_args();
 
     let party_index = (rank + 1) as u16;
-    let mut params_buf: Vec<u8> = [0; PARAM_SIZE].to_vec();
-    let mut param_file = &in_files[0];
-    param_file.read(&mut params_buf)?;
-    let params_str = String::from_utf8_lossy(&params_buf);
-    let params: Value = serde_json::from_str(params_str.trim_matches(char::from(0)))?;
+    let params: Value = serde_json::from_slice(&args[0])?;
 
     // Keygen
     if func_name == "keygen" {
         println!("Generating local key share for party {:?}...", party_index);
-        let mut key_file = &out_files[0];
         let key = keygen(
             params["num_parties"].as_u64().unwrap() as u16,
             params["num_threshold"].as_u64().unwrap() as u16,
             party_index,
         )?;
-        key_file.write(&key)?;
+        fs::write(params["key_file"].as_str().unwrap(), &key)?;
         println!("Key generation complete!");
 
     // Signing
     } else if func_name == "signing" {
         println!("Initiating signature generation for party {:?}...", party_index);
-        let mut key_buf: String = "".to_string();
-        let mut key_file = &in_files[1];
-        key_file.read_to_string(&mut key_buf).unwrap();
-        let key = serde_json::from_str::<LocalKey<Secp256k1>>(&key_buf).unwrap();
+        let key_data = fs::read(params["key_file"].as_str().unwrap())?;
+        let key = serde_json::from_slice::<LocalKey<Secp256k1>>(&key_data).unwrap();
 
         let active_party_iter = params["active_parties"].as_array().unwrap().iter();
         let active_parties : Vec<u16> = active_party_iter.map( |x| x.as_u64().unwrap() as u16).collect();
@@ -452,8 +443,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             params["message"].to_string(),
         )?;
 
-        let mut sig_file = &out_files[0];
-        sig_file.write(&signature)?;
+        libdots::output::output(&signature)?;
+
         println!("Signature generation complete.");
     }
     Ok(())
