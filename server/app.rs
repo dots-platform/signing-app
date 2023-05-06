@@ -6,7 +6,8 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::state_machine::{
     },
 };
 
-use libdots;
+use libdots::env::Env;
+use libdots::request::Request;
 use round_based::{Msg, StateMachine};
 use serde_json::Value;
 use std::error::Error;
@@ -19,10 +20,12 @@ const PROTOCOL_MSG_SIZE: usize = 18000;
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `num_parties` - The number of parties
 /// * `party` - KeyGen protocol state machine of current party
 /// * `party_index` - Index of current party
 fn receive_keygen(
+    req: &Request,
     num_parties: u16,
     party: &mut Keygen,
     party_index: u16,
@@ -32,7 +35,7 @@ fn receive_keygen(
         let recipient = party_index;
         if recipient != sender {
             let mut result_buf = [0; PROTOCOL_MSG_SIZE];
-            libdots::msg::recv(&mut result_buf, sender as usize - 1, 0)?;
+            req.msg_recv(&mut result_buf, sender as usize - 1, 0)?;
 
             // Deserialize message
             let received_msg = serde_json::from_str::<Msg<ProtocolMessage>>(
@@ -53,10 +56,12 @@ fn receive_keygen(
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `party` - OfflineStage protocol state machine of current party
 /// * `party_index` - Index of current party
 /// * `active_parties` - Parties participating in producing the signature
 fn receive_sign(
+    req: &Request,
     party: &mut OfflineStage,
     party_index: u16,
     active_parties: &Vec<u16>,
@@ -66,7 +71,7 @@ fn receive_sign(
         let recipient = party_index as usize;
         if recipient != *sender as usize {
             let mut result_buf = [0; PROTOCOL_MSG_SIZE];
-            libdots::msg::recv(&mut result_buf, *sender as usize - 1, 0)?;
+            req.msg_recv(&mut result_buf, *sender as usize - 1, 0)?;
 
             // Deserialize message
             let received_msg = serde_json::from_str::<Msg<OfflineProtocolMessage>>(
@@ -86,11 +91,13 @@ fn receive_sign(
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `msg_index` - Index of message which this party is broadcasting to all other parties
 /// * `num_parties` - The number of parties
 /// * `party` - KeyGen protocol state machine of current party
 /// * `party_index` - Index of current party
 fn broadcast_keygen(
+    req: &Request,
     msg_index: usize,
     num_parties: u16,
     party: &mut Keygen,
@@ -106,10 +113,10 @@ fn broadcast_keygen(
         let sender = party_index;
         if recipient != sender {
             // Send message to recipient
-            libdots::msg::send(serialized.as_bytes(), recipient as usize - 1, 0)?;
+            req.msg_send(serialized.as_bytes(), recipient as usize - 1, 0)?;
         }
     }
-    receive_keygen(num_parties, party, party_index)?;
+    receive_keygen(req, num_parties, party, party_index)?;
     Ok(())
 }
 
@@ -117,12 +124,14 @@ fn broadcast_keygen(
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `msg` - Index of message which this party is broadcasting to all other parties
 /// * `num_parties` - The number of parties
 /// * `party` - OfflineStage protocol state machine of current party
 /// * `party_index` - Index of current party
 /// * `active_parties` - Parties participating in producing the signature
 fn broadcast_sign(
+    req: &Request,
     msg_index: usize,
     party: &mut OfflineStage,
     party_index: u16,
@@ -138,10 +147,10 @@ fn broadcast_sign(
         let sender = party_index as usize;
         if *recipient != sender as u16 {
             // Send message to recipient
-            libdots::msg::send(serialized.as_bytes(), *recipient as usize - 1, 0)?;
+            req.msg_send(serialized.as_bytes(), *recipient as usize - 1, 0)?;
         }
     }
-    receive_sign(party, party_index, &active_parties)?;
+    receive_sign(req, party, party_index, &active_parties)?;
     Ok(())
 }
 
@@ -149,11 +158,13 @@ fn broadcast_sign(
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `msg_queue` - Messages this party is sending p2p to specific recipients
 /// * `num_parties` - The number of parties
 /// * `party` - KeyGen protocol state machine of current party
 /// * `party_index` - Index of current party
 fn p2p_keygen(
+    req: &Request,
     msg_queue: &mut Vec<Msg<ProtocolMessage>>,
     num_parties: u16,
     party: &mut Keygen,
@@ -165,10 +176,10 @@ fn p2p_keygen(
 
         // Send to intended recipient
         let recipient = msg.receiver.unwrap();
-        libdots::msg::send(serialized.as_bytes(), recipient as usize - 1, 0)?;
+        req.msg_send(serialized.as_bytes(), recipient as usize - 1, 0)?;
     }
 
-    receive_keygen(num_parties, party, party_index)?;
+    receive_keygen(req, num_parties, party, party_index)?;
     Ok(())
 }
 
@@ -176,11 +187,13 @@ fn p2p_keygen(
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `msg_queue` - Messages this party is sending p2p to specific recipients
 /// * `party` - OfflineStage protocol state machine of current party
 /// * `party_index` - Index of current party
 /// * `active_parties` - Parties participating in producing the signature
 fn p2p_sign(
+    req: &Request,
     msg_queue: &mut Vec<Msg<OfflineProtocolMessage>>,
     party: &mut OfflineStage,
     party_index: u16,
@@ -192,10 +205,10 @@ fn p2p_sign(
 
         // Send to intended recipient
         let recipient = msg.receiver.unwrap();
-        libdots::msg::send(serialized.as_bytes(), recipient as usize - 1, 0)?;
+        req.msg_send(serialized.as_bytes(), recipient as usize - 1, 0)?;
     }
 
-    receive_sign(party, party_index, active_parties)?;
+    receive_sign(req, party, party_index, active_parties)?;
     Ok(())
 }
 
@@ -203,11 +216,13 @@ fn p2p_sign(
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `msg_to_sign` - Message that parties must sign
 /// * `party_index` - Index of current party
 /// * `offline_output` - CompletedOfflineStage protocol state machine of current party
 /// * `active_parties` - Parties participating in producing the signature
 fn sign_message(
+    req: &Request,
     msg_to_sign: BigInt,
     party_index: u16,
     offline_output: CompletedOfflineStage,
@@ -225,7 +240,7 @@ fn sign_message(
         let sender = party_index;
         if *recipient != sender {
             // Send message to recipient
-            libdots::msg::send(serialized.as_bytes(), *recipient as usize - 1, 0)?;
+            req.msg_send(serialized.as_bytes(), *recipient as usize - 1, 0)?;
         }
     }
 
@@ -235,7 +250,7 @@ fn sign_message(
         let recipient = party_index;
         if recipient != *sender {
             let mut result_buf = [0u8; PROTOCOL_MSG_SIZE];
-            libdots::msg::recv(&mut result_buf, *sender as usize - 1, 0)?;
+            req.msg_recv(&mut result_buf, *sender as usize - 1, 0)?;
 
             // Deserialize message
             let received_share = serde_json::from_str::<PartialSignature>(
@@ -257,10 +272,12 @@ fn sign_message(
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `num_parties` - Total number of parties
 /// * `num_threshold` - The threshold t such that the number of honest and online parties must be at least t + 1 to produce a valid signature
 /// * `party_index` - Index of current party
 fn keygen(
+    req: &Request,
     num_parties: u16,
     num_threshold: u16,
     party_index: u16,
@@ -272,10 +289,10 @@ fn keygen(
     party
         .proceed()
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
-    broadcast_keygen(0, num_parties, &mut party, party_index)?;
+    broadcast_keygen(req, 0, num_parties, &mut party, party_index)?;
 
     // Round 2
-    broadcast_keygen(1, num_parties, &mut party, party_index)?;
+    broadcast_keygen(req, 1, num_parties, &mut party, party_index)?;
     party
         .proceed()
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
@@ -287,12 +304,12 @@ fn keygen(
         msg_queue.push(party.message_queue()[msg_index].clone());
     }
 
-    p2p_keygen(&mut msg_queue, num_parties, &mut party, party_index)?;
+    p2p_keygen(req, &mut msg_queue, num_parties, &mut party, party_index)?;
     party
         .proceed()
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
-    broadcast_keygen((num_parties + 1) as usize, num_parties, &mut party, party_index)?;
+    broadcast_keygen(req, (num_parties + 1) as usize, num_parties, &mut party, party_index)?;
     party
         .proceed()
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
@@ -306,12 +323,14 @@ fn keygen(
 ///
 /// # Arguments
 ///
+/// * `req` - The current DoTS request
 /// * `num_threshold` - The threshold t such that the number of honest and online parties must be at least t + 1 to produce a valid signature
 /// * `active_parties` - Parties participating in producing the signature
 /// * `key` - Local key share of current party generated in the keygen phase of the protocol
 /// * `party_index` - Index of current party
 /// * `message` - Message that must be signed
 fn sign(
+    req: &Request,
     num_threshold: u16,
     active_parties: &Vec<u16>,
     key: LocalKey<Secp256k1>,
@@ -329,7 +348,7 @@ fn sign(
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
 
     // Round 1
-    broadcast_sign(0, &mut offline_stage, party_index, &active_parties)?;
+    broadcast_sign(req, 0, &mut offline_stage, party_index, &active_parties)?;
     offline_stage
         .proceed()
         .map_err(|e| io::Error::new(ErrorKind::Other, e))?;
@@ -341,6 +360,7 @@ fn sign(
         msg_queue.push(offline_stage.message_queue()[msg_index].clone());
     }
     p2p_sign(
+        req,
         &mut msg_queue,
         &mut offline_stage,
         party_index,
@@ -352,6 +372,7 @@ fn sign(
 
     // Round 3
     broadcast_sign(
+        req,
         (num_threshold + 1) as usize,
         &mut offline_stage,
         party_index,
@@ -363,6 +384,7 @@ fn sign(
 
     // Round 4
     broadcast_sign(
+        req,
         (num_threshold + 2) as usize,
         &mut offline_stage,
         party_index,
@@ -374,6 +396,7 @@ fn sign(
 
     // Round 5
     broadcast_sign(
+        req,
         (num_threshold + 3) as usize,
         &mut offline_stage,
         party_index,
@@ -385,6 +408,7 @@ fn sign(
 
     // Round 6
     broadcast_sign(
+        req,
         (num_threshold + 4) as usize,
         &mut offline_stage,
         party_index,
@@ -398,6 +422,7 @@ fn sign(
     let message_int = BigInt::from_bytes(&message.as_bytes());
     let offline_output = offline_stage.pick_output().unwrap().unwrap();
     sign_message(
+        req,
         message_int,
         party_index,
         offline_output,
@@ -405,12 +430,10 @@ fn sign(
     )
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    libdots::env::init()?;
-
-    let rank = libdots::env::get_world_rank();
-    let func_name = libdots::env::get_func_name();
-    let args = libdots::env::get_args();
+fn handle_request(env: &Env, req: &Request) -> Result<(), Box<dyn Error>> {
+    let rank = env.get_world_rank();
+    let func_name = &req.func_name;
+    let args = &req.args;
 
     let party_index = (rank + 1) as u16;
     let params: Value = serde_json::from_slice(&args[0])?;
@@ -419,6 +442,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if func_name == "keygen" {
         println!("Generating local key share for party {:?}...", party_index);
         let key = keygen(
+            req,
             params["num_parties"].as_u64().unwrap() as u16,
             params["num_threshold"].as_u64().unwrap() as u16,
             party_index,
@@ -436,6 +460,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let active_parties : Vec<u16> = active_party_iter.map( |x| x.as_u64().unwrap() as u16).collect();
 
         let signature = sign(
+            req,
             params["num_threshold"].as_u64().unwrap() as u16,
             &active_parties,
             key,
@@ -443,9 +468,19 @@ fn main() -> Result<(), Box<dyn Error>> {
             params["message"].to_string(),
         )?;
 
-        libdots::output::output(&signature)?;
+        req.output(&signature)?;
 
         println!("Signature generation complete.");
     }
+
     Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let env = libdots::env::init()?;
+
+    loop {
+        let req = libdots::request::accept()?;
+        handle_request(&env, &req)?;
+    }
 }

@@ -7,7 +7,7 @@ edition = "2021"
 curv-kzen = "0.9.0"
 dotspb = "0.4.0"
 futures = "0.3.28"
-libdots = "0.2.0"
+libdots = { git = "https://github.com/dtrust-project/libdots.git", branch = "scoped-requests" }
 multi-party-ecdsa = { git = "https://github.com/ZenGo-X/multi-party-ecdsa.git", version = "0.8.1" }
 prost = "0.11.0"
 round-based = "0.1.4"
