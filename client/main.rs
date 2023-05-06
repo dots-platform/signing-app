@@ -1,16 +1,29 @@
 use std::env;
+use std::error::Error;
 
+use dotspb::dec_exec::dec_exec_client::DecExecClient;
+use dotspb::dec_exec::{App, Blob};
+use futures::future;
 use serde::{Deserialize, Serialize};
+use tonic::transport::Channel;
+use tonic::Request;
+use uuid::Uuid;
 
-mod client;
-use client::Client;
+const APP_NAME: &str = "signing";
+
+fn uuid_to_uuidpb(id: Uuid) -> dotspb::dec_exec::Uuid {
+    dotspb::dec_exec::Uuid {
+        hi: (id.as_u128() >> 64) as u64,
+        lo: id.as_u128() as u64,
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Params {
     K {
-        num_threshold: u16,
         num_parties: u16,
+        num_threshold: u16,
     },
     S {
         num_threshold: u16,
@@ -19,31 +32,128 @@ pub enum Params {
     },
 }
 
-async fn upload_keygen_params(client: &Client, id: String, num_threshold: u16, num_parties: u16) {
+async fn upload_keygen_params(
+    clients: &mut [DecExecClient<Channel>],
+    num_parties: u16,
+    num_threshold: u16,
+) -> Result<(), Box<dyn Error>> {
     let params = Params::K {
-        num_threshold,
         num_parties,
+        num_threshold,
     };
     let json = serde_json::to_vec(&params).unwrap();
-    let upload_val = vec![json; client.node_addrs.len()];
-    client.upload_blob(id.clone() + ".json", upload_val).await;
+    future::join_all(
+            clients
+                .iter_mut()
+                .map(|client|
+                     client.upload_blob(Request::new(Blob {
+                         client_id: "".to_owned(),
+                         key: format!("keygen-params.json"),
+                         val: json.clone(),
+                     }))
+                 )
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
 }
 
 async fn upload_sign_params(
-    client: &Client,
-    id: String,
+    clients: &mut [DecExecClient<Channel>],
     num_threshold: u16,
-    active_parties: Vec<u16>,
-    message: String,
-) {
+    active_parties: &[u16],
+    message: &str,
+) -> Result<(), Box<dyn Error>> {
     let params = Params::S {
         num_threshold,
-        active_parties,
-        message,
+        active_parties: active_parties.to_owned(),
+        message: message.to_owned(),
     };
     let json = serde_json::to_vec(&params).unwrap();
-    let upload_val = vec![json; client.node_addrs.len()];
-    client.upload_blob(id.clone() + ".json", upload_val).await;
+    future::join_all(
+            clients
+                .iter_mut()
+                .map(|client|
+                     client.upload_blob(Request::new(Blob {
+                         client_id: "".to_owned(),
+                         key: format!("sign-params.json"),
+                         val: json.clone(),
+                     }))
+                 )
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
+}
+
+async fn keygen(
+    clients: &mut [DecExecClient<Channel>],
+    key_file: &str,
+    num_parties: u16,
+    num_threshold: u16,
+) -> Result<(), Box<dyn Error>> {
+    upload_keygen_params(clients, num_parties, num_threshold).await?;
+
+    let request_id = Uuid::new_v4();
+    future::join_all(
+            clients
+                .iter_mut()
+                .map(|client|
+                    client.exec(Request::new(App {
+                        app_name: APP_NAME.to_owned(),
+                        app_uid: 0,
+                        request_id: Some(uuid_to_uuidpb(request_id)),
+                        client_id: "".to_owned(),
+                        func_name: "keygen".to_owned(),
+                        in_files: vec!["keygen-params.json".to_owned()],
+                        out_files: vec![key_file.to_owned()],
+                        args: vec![],
+                    }))
+                )
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
+}
+
+async fn sign(
+    clients: &mut [DecExecClient<Channel>],
+    key_file: &str,
+    num_threshold: u16, 
+    active_parties: &[u16],
+    message: &str,
+) -> Result<(), Box<dyn Error>> {
+    upload_sign_params(clients, num_threshold, active_parties, message)
+        .await?;
+
+    let request_id = Uuid::new_v4();
+    future::join_all(
+            clients
+                .iter_mut()
+                .map(|client|
+                    client.exec(Request::new(App {
+                        app_name: APP_NAME.to_owned(),
+                        app_uid: 0,
+                        request_id: Some(uuid_to_uuidpb(request_id)),
+                        client_id: "".to_owned(),
+                        func_name: "signing".to_owned(),
+                        in_files: vec!["sign-params.json".to_owned(), key_file.to_owned()],
+                        out_files: vec!["signature.json".to_owned()],
+                        args: vec![],
+                    }))
+                )
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -53,10 +163,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let node_addrs = ["http://localhost:50050", "http://localhost:50051", "http://localhost:50052"];
 
-    let cli_id = "user1";
-    let app_name = "signing";
-    let mut client = Client::new(cli_id);
-    client.setup(node_addrs.to_vec(), None);
+    let mut clients = future::join_all(
+            node_addrs
+                .iter()
+                .map(|addr| DecExecClient::connect(addr.clone()))
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
 
     let num_parties: u16 = match args[2].parse() {
         Ok(s) => s,
@@ -84,15 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match &cmd[..] {
         "keygen" => {
-            upload_keygen_params(&client, String::from(cli_id), num_threshold, num_parties)
-                .await;
-
-            let in_files = [String::from("user1.json")];
-            let out_files = [key_file];
-
-            client
-                .exec(app_name, "keygen", in_files.to_vec(), out_files.to_vec(), vec![vec![]; num_parties as usize])
-                .await?;
+            keygen(&mut clients, &key_file, num_parties, num_threshold).await?;
         }
         "sign" => {
             let active_parties: String = match args[5].parse() {
@@ -111,21 +217,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let active_parties_str: Vec<&str> = active_parties.split(",").collect();
-            let mut active_parties: Vec<u16> = vec![];
-            for party in active_parties_str {
-                active_parties.push(party.trim_matches(char::from(0)).parse::<u16>().unwrap());
-            }
+            let active_parties: Vec<u16> = active_parties.split(",")
+                .map(|s| s.parse::<u16>().unwrap())
+                .collect();
 
-            upload_sign_params(&client, String::from(cli_id), num_threshold, active_parties, message)
-                .await;
-
-            let in_files = [String::from("user1.json"), key_file];
-            let out_files = [String::from("signature.json")];
-
-            client
-                .exec(app_name, "signing", in_files.to_vec(), out_files.to_vec(), vec![vec![]; num_parties as usize])
-                .await?;
+            sign(&mut clients, &key_file, num_threshold, &active_parties, &message).await?;
         }
 
         _ => println!("Missing/wrong arguments"),
