@@ -13,6 +13,8 @@ use serde_json::Value;
 use std::error::Error;
 use std::fs;
 use std::io::{self, ErrorKind};
+use std::sync::Arc;
+use std::thread;
 
 const PROTOCOL_MSG_SIZE: usize = 18000;
 
@@ -442,7 +444,7 @@ fn handle_request(env: &Env, req: &Request) -> Result<(), Box<dyn Error>> {
     if func_name == "keygen" {
         println!("Generating local key share for party {:?}...", party_index);
         let key = keygen(
-            req,
+            &req,
             params["num_parties"].as_u64().unwrap() as u16,
             params["num_threshold"].as_u64().unwrap() as u16,
             party_index,
@@ -460,7 +462,7 @@ fn handle_request(env: &Env, req: &Request) -> Result<(), Box<dyn Error>> {
         let active_parties : Vec<u16> = active_party_iter.map( |x| x.as_u64().unwrap() as u16).collect();
 
         let signature = sign(
-            req,
+            &req,
             params["num_threshold"].as_u64().unwrap() as u16,
             &active_parties,
             key,
@@ -477,10 +479,13 @@ fn handle_request(env: &Env, req: &Request) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let env = libdots::env::init()?;
+    let env = Arc::new(libdots::env::init()?);
 
     loop {
+        let env = env.clone();
         let req = libdots::request::accept()?;
-        handle_request(&env, &req)?;
+        thread::spawn(move || {
+            handle_request(&env, &req).unwrap();
+        });
     }
 }

@@ -896,7 +896,7 @@ checksum = "6a987beff54b60ffa6d51982e1aa1146bc42f19bd26be28b0586f252fccf5317"
 [[package]]
 name = "libdots"
 version = "0.2.0"
-source = "git+https://github.com/dtrust-project/libdots.git?branch=scoped-requests#166585f89ef062b6ebfd1127de90aed396778ae2"
+source = "git+https://github.com/dtrust-project/libdots.git?branch=scoped-requests#9de70b6c20ed46e1f1247df6f0e080ef443dca9f"
 dependencies = [
  "bindgen",
  "uuid",
