@@ -13,7 +13,6 @@ use serde_json::Value;
 use std::error::Error;
 use std::fs;
 use std::io::{self, ErrorKind};
-use std::sync::Arc;
 use std::thread;
 
 const PROTOCOL_MSG_SIZE: usize = 18000;
@@ -479,13 +478,17 @@ fn handle_request(env: &Env, req: &Request) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let env = Arc::new(libdots::env::init()?);
+    let env = libdots::env::init()?;
 
-    loop {
-        let env = env.clone();
-        let req = libdots::request::accept()?;
-        thread::spawn(move || {
-            handle_request(&env, &req).unwrap();
-        });
-    }
+    thread::scope(|s| -> Result<(), Box<dyn Error>> {
+        loop {
+            let env = &env;
+            let req = libdots::request::accept()?;
+            s.spawn(move || {
+                handle_request(env, &req).unwrap();
+            });
+        }
+    })?;
+
+    Ok(())
 }
