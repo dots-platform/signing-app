@@ -12,27 +12,24 @@ brew install rust
 brew install gmp
 ```
 
-# Initialize Decentralized Nodes
-In the `dtrust` folder, start 3 nodes in three separate terminals:
-```jsx
-./platform/init_server --node_id node1 --config ./core-modules/signing/server_conf.yml
+# Setup Nodes
+First configure the server nodes in `server_conf.yml`. Any number of servers can be added. The default configuration runs with three servers;
+
+Ensure that the application configuration stanza is present in the server config. By default, the client uses the application name `signing`. If this repository is cloned as a sibling of the <https://github.com/dtrust-project/dots-server> repo, the following stanza should work:
+
+```yaml
+apps:
+  signing:
+    path: ../signing-app/target/debug/rust_app
 ```
 
-```jsx
-./platform/init_server --node_id node2 --config ./core-modules/signing/server_conf.yml
+# Start Nodes
+Run the following command in one terminal in the `dots-server` repo.
+```bash
+./start-n.sh 0 <N-1>
 ```
 
-```jsx
-./platform/init_server --node_id node3 --config ./core-modules/signing/server_conf.yml
-```
-
-
-# Start Server
-`cd` into `core-modules/signing`. Start the server:
-```jsx
-cargo build
-cargo run --bin rust_app
-```
+Where `<N-1>` is the number of servers minus one, or the index of the last server node.
 
 MacOS has a [known issue](https://github.com/ZenGo-X/multi-party-ecdsa/issues/66) where `rustc` has trouble locating the `gmp` library. You may see something similar to the following error:
 
@@ -49,11 +46,17 @@ export INCLUDE_PATH=$INCLUDE_PATH:/opt/homebrew/include
 ```
 Now, restart the server.
 
+# Register user
+Register a user with the given username and password.
+```jsx
+cargo run --bin client register username password
+```
+
 # KeyGen
 We will generate keys for a scheme that has 3 separate parties and a threshold of 1 party. In a new terminal, run:
 
 ```jsx
-cargo run --bin client keygen 3 1 key.json
+cargo run --bin client username password keygen 3 1 key.json
 ```
 The local key shares will be generated as files:
 - In `dtrust/signing/files/node1/key.json`, you will find the key for party 1.
@@ -65,7 +68,7 @@ The local key shares will be generated as files:
 We will sign the message `“hello”` by passing in the indices of the parties who attended the signing (`1,2`). In a new terminal, run:
 
 ```jsx
-cargo run --bin client sign 3 1 key.json 1,2 hello
+cargo run --bin client username password sign 3 1 key.json 1,2 hello
 ```
 The resulting signature will be generated as a file:
 - In `dtrust/signing/files/node1/signature.json`, you will find the joint signature.
