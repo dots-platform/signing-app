@@ -56,7 +56,7 @@ cargo run --bin client register username password
 We will generate keys for a scheme that has 3 separate parties and a threshold of 1 party. In a new terminal, run:
 
 ```jsx
-cargo run --bin client username password keygen 3 1 key.json
+cargo run --bin client keygen username password 3 1 key.json
 ```
 The local key shares will be generated as files:
 - In `dtrust/signing/files/node1/key.json`, you will find the key for party 1.
@@ -68,7 +68,7 @@ The local key shares will be generated as files:
 We will sign the message `“hello”` by passing in the indices of the parties who attended the signing (`1,2`). In a new terminal, run:
 
 ```jsx
-cargo run --bin client username password sign 3 1 key.json 1,2 hello
+cargo run --bin client sign username password 3 1 key.json 1,2 hello
 ```
 The resulting signature will be generated as a file:
 - In `dtrust/signing/files/node1/signature.json`, you will find the joint signature.
