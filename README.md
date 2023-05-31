@@ -1,4 +1,4 @@
-# Setup
+# Dots Application: Distributed Signature Signing
 
 ### Installations
 
