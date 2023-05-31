@@ -21,12 +21,20 @@ fn uuid_to_uuidpb(id: Uuid) -> dotspb::dec_exec::Uuid {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Params {
+    User {
+        username: String,
+        password: String,
+    },
     K {
+        username: String,
+        password: String,
         key_file: String,
         num_parties: u16,
         num_threshold: u16,
     },
     S {
+        username: String,
+        password: String,
         key_file: String,
         num_threshold: u16,
         active_parties: Vec<u16>,
@@ -34,13 +42,52 @@ pub enum Params {
     },
 }
 
+async fn register(
+    clients: &mut [DecExecClient<Channel>],
+    username: &str,
+    password: &str,
+) -> Result<(), Box<dyn Error>> {
+    let request_id = Uuid::new_v4();
+    let params = Params::User {
+        username: username.to_owned(),
+        password: password.to_owned(),
+    };
+    let params_json = serde_json::to_vec(&params)?;
+
+    future::join_all(
+            clients
+                .iter_mut()
+                .map(|client| {
+                    client.exec(Request::new(App {
+                        app_name: APP_NAME.to_owned(),
+                        app_uid: 0,
+                        request_id: Some(uuid_to_uuidpb(request_id)),
+                        client_id: "".to_owned(),
+                        func_name: "register".to_owned(),
+                        in_files: vec![],
+                        out_files: vec![],
+                        args: vec![params_json.clone()],
+                    }))
+                })
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(())
+}
+
 async fn keygen(
     clients: &mut [DecExecClient<Channel>],
+    username: &str,
+    password: &str,
     key_file: &str,
     num_parties: u16,
     num_threshold: u16,
 ) -> Result<(), Box<dyn Error>> {
     let params = Params::K {
+        username: username.to_owned(),
+        password: password.to_owned(),
         key_file: key_file.to_owned(),
         num_parties,
         num_threshold,
@@ -73,12 +120,16 @@ async fn keygen(
 
 async fn sign(
     clients: &mut [DecExecClient<Channel>],
+    username: &str,
+    password: &str,
     key_file: &str,
     num_threshold: u16, 
     active_parties: &[u16],
     message: &str,
 ) -> Result<(), Box<dyn Error>> {
     let params = Params::S {
+        username: username.to_owned(),
+        password: password.to_owned(),
         key_file: key_file.to_owned(),
         num_threshold,
         active_parties: active_parties.to_owned(),
@@ -126,23 +177,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .into_iter()
         .collect::<Result<Vec<_>, _>>()?;
 
-    let num_parties: u16 = match args[2].parse() {
+    let username: String = match args[2].parse() {
         Ok(s) => s,
         Err(_) => {
-            eprintln!("error: num_parties not a string");
+            eprintln!("error: key_file not a string");
             panic!("");
         }
     };
 
-    let num_threshold: u16 = match args[3].parse() {
-        Ok(s) => s,
-        Err(_) => {
-            eprintln!("error: num_threshold not a string");
-            panic!("");
-        }
-    };
-
-    let key_file: String = match args[4].parse() {
+    let password: String = match args[3].parse() {
         Ok(s) => s,
         Err(_) => {
             eprintln!("error: key_file not a string");
@@ -151,11 +194,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     match &cmd[..] {
+        "register" => {
+            register(&mut clients, &username, &password).await?;
+        }
         "keygen" => {
-            keygen(&mut clients, &key_file, num_parties, num_threshold).await?;
+            let num_parties: u16 = match args[4].parse() {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("error: num_parties not a string");
+                    panic!("");
+                }
+            };
+            let num_threshold: u16 = match args[5].parse() {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("error: num_threshold not a string");
+                    panic!("");
+                }
+            };
+            let key_file: String = match args[6].parse() {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("error: key_file not a string");
+                    panic!("");
+                }
+            };
+            keygen(&mut clients, &username, &password, &key_file, num_parties, num_threshold).await?;
         }
         "sign" => {
-            let active_parties: String = match args[5].parse() {
+            let num_parties: u16 = match args[4].parse() {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("error: num_parties not a string");
+                    panic!("");
+                }
+            };
+            let num_threshold: u16 = match args[5].parse() {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("error: num_threshold not a string");
+                    panic!("");
+                }
+            };
+            let key_file: String = match args[6].parse() {
+                Ok(s) => s,
+                Err(_) => {
+                    eprintln!("error: key_file not a string");
+                    panic!("");
+                }
+            };
+
+            let active_parties: String = match args[7].parse() {
                 Ok(n) => n,
                 Err(_) => {
                     eprintln!("error: active_parties not a string");
@@ -163,7 +252,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
 
-            let message: String = match args[6].parse() {
+            let message: String = match args[8].parse() {
                 Ok(n) => n,
                 Err(_) => {
                     eprintln!("error: message not a string");
@@ -175,7 +264,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map(|s| s.parse::<u16>().unwrap())
                 .collect();
 
-            sign(&mut clients, &key_file, num_threshold, &active_parties, &message).await?;
+            sign(&mut clients, &username, &password, &key_file, num_threshold, &active_parties, &message).await?;
         }
 
         _ => println!("Missing/wrong arguments"),

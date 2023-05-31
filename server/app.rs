@@ -8,12 +8,21 @@ use multi_party_ecdsa::protocols::multi_party_ecdsa::gg_2020::state_machine::{
 
 use libdots;
 use round_based::{Msg, StateMachine};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::error::Error;
 use std::fs;
 use std::io::{self, ErrorKind};
+use std::thread;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::collections::HashMap;
+use bcrypt::{hash, verify, DEFAULT_COST};
+
+use libdots::env::Env;
+use libdots::request::Request;
 
 const PROTOCOL_MSG_SIZE: usize = 18000;
+const USER_DATA: &str = "users.json";
 
 /// This party receives incoming messages in present round of the keygen protocol
 ///
@@ -405,47 +414,142 @@ fn sign(
     )
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    libdots::env::init()?;
+fn register_user(username: &str, password: &str) -> std::io::Result<()> {
+    // Open file in read mode first to check existing users
+    let mut file = OpenOptions::new().read(true).write(true).create(true).open(USER_DATA)?;
 
-    let rank = libdots::env::get_world_rank();
-    let func_name = libdots::env::get_func_name();
-    let args = libdots::env::get_args();
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    let mut data: HashMap<String, String> = match serde_json::from_str(&contents) {
+        Ok(json) => json,
+        Err(_) => HashMap::new(), // If parsing fails, use an empty HashMap
+    };
+
+    // Check if the user is already registered
+    if data.contains_key(username) {
+        println!("User {} already exists", username);
+        return Ok(());
+    }
+
+    // Register a new user
+    let hashed_password = hash(password, DEFAULT_COST).unwrap();
+    data.insert(username.to_string(), hashed_password);
+
+    // Open file in write mode now to overwrite it with updated data
+    let mut file = OpenOptions::new().write(true).open(USER_DATA)?;
+
+    // Write the updated contents
+    file.write_all(serde_json::to_string(&data)?.as_bytes())?;
+
+    println!("User {} registered", username);
+
+    Ok(())
+}
+
+
+fn authenticate_user(username: &str, password: &str) -> io::Result<bool> {
+    // Open file in read-only mode
+    let mut file = File::open(USER_DATA)?;
+
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)?;
+
+    let data: HashMap<String, String> = match serde_json::from_str(&contents) {
+        Ok(json) => json,
+        Err(_) => HashMap::new(), // If parsing fails, use an empty HashMap
+    };
+
+    // Check if the user exists and the password matches
+    Ok(data.get(username).map_or(false, |p| verify(password, p).unwrap()))
+}
+
+fn handle_request(env: &Env, req: &Request) -> Result<(), Box<dyn Error>> {
+    let rank = env.get_world_rank();
+    let num_parties = env.get_world_size();
+    let func_name = &req.func_name;
+    let args = &req.args;
 
     let party_index = (rank + 1) as u16;
     let params: Value = serde_json::from_slice(&args[0])?;
 
-    // Keygen
-    if func_name == "keygen" {
-        println!("Generating local key share for party {:?}...", party_index);
-        let key = keygen(
-            params["num_parties"].as_u64().unwrap() as u16,
-            params["num_threshold"].as_u64().unwrap() as u16,
-            party_index,
-        )?;
-        fs::write(params["key_file"].as_str().unwrap(), &key)?;
-        println!("Key generation complete!");
+    println!("rank {} starting", rank);
 
-    // Signing
-    } else if func_name == "signing" {
-        println!("Initiating signature generation for party {:?}...", party_index);
-        let key_data = fs::read(params["key_file"].as_str().unwrap())?;
-        let key = serde_json::from_slice::<LocalKey<Secp256k1>>(&key_data).unwrap();
+    let username = params["username"].as_str().unwrap();
+    let password = params["password"].as_str().unwrap();
 
-        let active_party_iter = params["active_parties"].as_array().unwrap().iter();
-        let active_parties : Vec<u16> = active_party_iter.map( |x| x.as_u64().unwrap() as u16).collect();
+    match &func_name[..] {
+        "register" => {
+            println!("Register user");
+            if let Err(e) = register_user(username, password) {
+                eprintln!("Failed to register user: {}", e);
+            }
 
-        let signature = sign(
-            params["num_threshold"].as_u64().unwrap() as u16,
-            &active_parties,
-            key,
-            party_index,
-            params["message"].to_string(),
-        )?;
+            Ok(())
+        },
+        "keygen" => {
+            let authenticated = authenticate_user(username, password)?;
 
-        libdots::output::output(&signature)?;
+            if authenticated {
+                println!("User {} authenticated", username);
 
-        println!("Signature generation complete.");
+                println!("Generating local key share for party {:?}...", party_index);
+                let key = keygen(
+                    params["num_parties"].as_u64().unwrap() as u16,
+                    params["num_threshold"].as_u64().unwrap() as u16,
+                    party_index,
+                )?;
+                fs::write(params["key_file"].as_str().unwrap(), &key)?;
+                println!("Key generation complete!");
+            } else {
+                println!("Failed to authenticate user {}", username);
+            }
+
+            Ok(())
+        },
+        "signing" => {
+            let authenticated = authenticate_user(username, password)?;
+
+            if authenticated {
+                println!("Initiating signature generation for party {:?}...", party_index);
+                let key_data = fs::read(params["key_file"].as_str().unwrap())?;
+                let key = serde_json::from_slice::<LocalKey<Secp256k1>>(&key_data).unwrap();
+    
+                let active_party_iter = params["active_parties"].as_array().unwrap().iter();
+                let active_parties : Vec<u16> = active_party_iter.map( |x| x.as_u64().unwrap() as u16).collect();
+    
+                let signature = sign(
+                    params["num_threshold"].as_u64().unwrap() as u16,
+                    &active_parties,
+                    key,
+                    party_index,
+                    params["message"].to_string(),
+                )?;
+    
+                println!("Signature generation complete.");
+
+            } else {
+                println!("Failed to authenticate user {}", username);
+            }
+
+            Ok(())
+        }
+        _ => panic!(),
     }
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let env = libdots::env::init()?;
+
+    thread::scope(|s| -> Result<(), Box<dyn Error>> {
+        loop {
+            let env = &env;
+            let req = libdots::request::accept()?;
+            s.spawn(move || {
+                handle_request(env, &req).unwrap();
+            });
+        }
+    })?;
+
     Ok(())
 }
